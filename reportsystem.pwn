@@ -188,7 +188,7 @@ CMD:r(playerid, params[]) {
 	if (!character) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}Y (y) or N (n) is the only supported answer.");
 	
 	mysql_format(Database, query, sizeof(query), "SELECT * FROM `reports` WHERE `ID` = '%i'", reportid);
-	mysql_pquery(Database, query, "VoteReport", "iii", playerid, reportid, (character == 'Y') ? (1) : ((character == 'N') ? (2) : (0)));
+	mysql_pquery(Database, query, "VoteReport", "iii", playerid, reportid, character);
 	return 1;
 }
 
