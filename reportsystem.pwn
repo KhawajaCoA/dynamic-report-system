@@ -139,8 +139,8 @@ CMD:clearreports(playerid) {
 	return SendClientMessage(playerid, COLOR_LIGHTBLUE, "You have deleted 15 latest reports that existed on the MySQL database.");
 }
 
-forward AcceptReport(playerid, report_id, vote);
-public AcceptReport(playerid, report_id, vote) {
+forward VoteReport(playerid, report_id, vote);
+public VoteReport(playerid, report_id, vote) {
 
 	new
 		rows, string[100], accepted, reported[MAX_PLAYER_NAME], reason[100];
@@ -178,7 +178,14 @@ CMD:r(playerid, params[]) {
 	
 	new reportid, string[200], query[300], character;
 	if (sscanf(params, "dc", reportid, character)) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}/R [Report ID] [Y/N]");
-	if (character != 'Y' || character != 'N') return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}Y or N is the only supported answer.");
+	
+	switch (character) {
+		case 'Y', 'y': character = 1;
+		case 'N', 'n': character = 2;
+		default: character = 0;
+	}
+	
+	if (!character) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}Y (y) or N (n) is the only supported answer.");
 	
 	mysql_format(Database, query, sizeof(query), "SELECT * FROM `reports` WHERE `ID` = '%i'", reportid);
 	mysql_pquery(Database, query, "VoteReport", "iii", playerid, reportid, (character == 'Y') ? (1) : ((character == 'N') ? (2) : (0)));
