@@ -1,16 +1,17 @@
-#define FILTERSCRIPT
-
 #include <a_samp>
+
+#undef MAX_PLAYERS
+#define MAX_PLAYERS (100) // Be sure to change this and redefine it! This is mandatory!
+
 #include <a_mysql>
 #include <sscanf2>
 #include <zcmd>
-#include <easyDialog>
 #include <foreach>
 #include "colors2.inc"
 
-#if defined FILTERSCRIPT
-
-new MySQL: Database;
+new
+	MySQL: Database,
+	p_Offset[MAX_PLAYERS];
 
 #define MYSQL_HOST		"localhost"
 #define MYSQL_USER		"root"
@@ -22,152 +23,185 @@ public OnFilterScriptInit()
 	new MySQLOpt: option_id = mysql_init_options();
 	mysql_set_option(option_id, AUTO_RECONNECT, true); // We will set that option to automatically reconnect on timeouts.
 	Database = mysql_connect(MYSQL_HOST, MYSQL_USER, MYSQL_PASS, MYSQL_DATABASE, option_id);
-	if(Database == MYSQL_INVALID_HANDLE || mysql_errno(Database) != 0) // Checking if the database connection is invalid to shutdown.
-	{
+	
+	if (Database == MYSQL_INVALID_HANDLE || mysql_errno(Database) != 0) { // Checking if the database connection is invalid or there's an error to shutdown
 		print("Connection to MySQL database has failed! Shutting down the server.");
 		printf("[DEBUG] Host: %s, User: %s, Password: %s, Database: %s", MYSQL_HOST, MYSQL_USER, MYSQL_PASS, MYSQL_DATABASE);
 		SendRconCommand("exit");
 		return 1;
 	}
-	else
+	else {
 		print("Connection to MySQL database was successful.");
+	}
+	
 	return 1;
 }
 
-CMD:report(playerid, params[])
-{
-	new targetid, reason[200], query[300];
-	if(sscanf(params, "ds[200]", targetid, reason)) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}/report [targetid] [reason]");
-	if(!IsPlayerConnected(targetid)) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: {FFFFFF}That player is not connected.");
+SendAdminMessage(color, string[]) {
+
+	foreach(new i : Player) {
+		if (!IsPlayerAdmin(i)) continue;
+		
+		SendClientMessage(i, color, query);
+	}
+	
+	return 1;
+}
+
+CMD:report(playerid, params[]) {
+	new targetid, reason[100], query[300];
+	if(sscanf(params, "ds[100]", targetid, reason)) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}/report [targetid] [reason]");
+	if(targetid == INVALID_PLAYER_ID) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: {FFFFFF}That player is not connected.");
 
 	mysql_format(Database, query, sizeof(query), "INSERT INTO `reports` (`Reporter`, `Reported`, `Reason`, `Date`) VALUES ('%e', '%e', '%e', '%e')", GetName(playerid), GetName(targetid), reason, ReturnDate());
-	mysql_tquery(Database, query);
-	new string[200];
+	mysql_pquery(Database, query);
 
-	format(string, sizeof(string), "REPORT: {FFFFFF}%s has reported %s for the reason: %s", GetName(playerid), GetName(targetid), reason);
-	foreach(new i : Player)
-	{
-		if(IsPlayerConnected(i))
-		{
-			if(IsPlayerAdmin(i))
-			{
-				SendClientMessage(i, COLOR_LIGHTBLUE, string);
-			}
-		}
-	}
+	format(query, query, "REPORT: {FFFFFF}%s has reported %s for the reason: %s", GetName(playerid), GetName(targetid), reason);
+	SendAdminMessage(COLOR_LIGHTBLUE, query);
+	
 	SendClientMessage(playerid, COLOR_LIGHTBLUE, "[SUCCESS]: {FFFFFF}Your report has been successfully sent to all administrators online.");
 	return 1;
 }
 
-CMD:reports(playerid, params[])
-{
-	new query[300];
-	if(!IsPlayerAdmin(playerid)) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: {FFFFFF}You are not authorized to use that command.");
-	mysql_format(Database, query, sizeof(query), "SELECT * FROM `reports` ORDER BY `Date` LIMIT 15;");
-	new Cache:result = mysql_query(Database, query);
-	if(cache_num_rows())
-	{
-		new string[2300], rinfo[1000], Reporter[24], Reported[24], Reason[200], Date[30], reportid, Accepted;
-		strcat(string, "Displaying 15 latest reports:\n\n");
-        for(new i = 0; i < cache_num_rows(); i++)
-        {
-        	cache_get_value_name(i, "Reporter", Reporter, 24);
+GetReports(playerid) {
+
+	new
+		query[128];
+	
+	mysql_format(Database, query, sizeof query, "SELECT * FROM `reports` ORDER BY `Date` LIMIT 15 OFFSET %d", p_Offset[playerid]);
+	mysql_tquery(Database, query, "ShowReportsMenu", "i");
+
+	return 1;
+}
+
+forward ShowReportsMenu(playerid);
+public ShowReportsMenu(playerid) {
+
+	new
+		rows;
+	
+	cache_get_row_count(rows);
+	
+	if (!rows) {
+		return Dialog_Show(playerid, DIALOG_REPORTS, DIALOG_STYLE_MSGBOX, "No reports were found", "No reports were found on the MySQL database.", "Close", "");
+	}
+	
+	new
+		i,
+		string[256], // format-ed text
+		info[1000], // text displayed in the dialog
+		Reporter[MAX_PLAYER_NAME],
+		Repoted[MAX_PLAYER_NAME],
+		Reason[100],
+		Date[30], // Use UNIX TIMESTAMPS!!!
+		reportid,
+		Accepted;
+	
+	strcat(info, "{FF7256}Displaying 15 latest reports:\n\n{FFFFFF}"); // Colored it :D
+	
+	for (i = 0; i < rows; i++) {
+		cache_get_value_name(i, "Reporter", Reporter, 24);
         	cache_get_value_name(i, "Reported", Reported, 24);
-        	cache_get_value_name(i, "Reason", Reason, 200);
+        	cache_get_value_name(i, "Reason", Reason, 100);
         	cache_get_value_name(i, "Date", Date, 30);
         	cache_get_value_name_int(i, "ID", reportid);
         	cache_get_value_name_int(i, "Accepted", Accepted);
-        	switch(Accepted)
-        	{
-        		case 0: format(rinfo, sizeof(rinfo), "{AFAFAF}[ID: %d]: {FFFFFF}%s has reported %s for the reason {AFAFAF}'%s'{FFFFFF} on %s - {AFAFAF}Not Checked\n", reportid, Reporter, Reported, Reason, Date);
-        		case 1: format(rinfo, sizeof(rinfo), "{AFAFAF}[ID: %d]: {FFFFFF}%s has reported %s for the reason {AFAFAF}'%s'{FFFFFF} on %s - {00AA00}Accepted\n", reportid, Reporter, Reported, Reason, Date);
-        		case 2: format(rinfo, sizeof(rinfo), "{AFAFAF}[ID: %d]: {FFFFFF}%s has reported %s for the reason {AFAFAF}'%s'{FFFFFF} on %s - {FF0000}Denied\n", reportid, Reporter, Reported, Reason, Date);
+		
+		format(string, sizeof string, "{AFAFAF}[ID: %d]: {FFFFFF}%s has reported %s for the reason {AFAFAF}'%s' on %s - ");
+		switch(Accepted) {
+        		case 0: strcat(string, {AFAFAF}Not Checked\n");
+        		case 1: strcat(string, {00AA00}Accepted\n");
+        		case 2: strcat(string, {FF0000}Denied\n");
         	}
-        	strcat(string, rinfo);
+		
+		strcat(info, string);
         }
-        Dialog_Show(playerid, DIALOG_REPORTS, DIALOG_STYLE_MSGBOX, "Latest 15 Reports", string, "Okay", "");
-	}
-	else
-	{
-		Dialog_Show(playerid, DIALOG_REPORTS, DIALOG_STYLE_MSGBOX, "No reports were found", "No reports were found on the MySQL database.", "Close", "");
-	}
-	cache_delete(result);
+	
+	Dialog_Show(playerid, DIALOG_REPORTS, DIALOG_STYLE_MSGBOX, "Latest 15 Reports", info, "Close", "Next page");
+
 	return 1;
 }
 
-CMD:clearreports(playerid, params[])
-{
-	new query[200];
+CMD:reports(playerid, params[]) {
+	
 	if(!IsPlayerAdmin(playerid)) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: {FFFFFF}You are not authorized to use that command.");
-
-	mysql_format(Database, query, sizeof(query), "DELETE FROM `reports` ORDER BY `Date` LIMIT 15;");
-	mysql_tquery(Database, query);
-
-	SendClientMessage(playerid, COLOR_LIGHTBLUE, "You have deleted 15 latest reports that existed on the MySQL database.");
-	return 1;
+	
+	p_Offset[playerid] = 0;
+	
+	return GetReports(playerid);
 }
 
-CMD:ar(playerid, params[])
-{	
-	new reportid, string[200], query[300];
+CMD:clearreports(playerid) {
 	if(!IsPlayerAdmin(playerid)) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: {FFFFFF}You are not authorized to use that command.");
-	if(sscanf(params, "d", reportid)) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}/ar [reportid]");
+
+	mysql_pquery(Database, query, "DELETE FROM `reports` ORDER BY `Date` LIMIT 15;"); // removed the format line, made it pquery and simple
+
+	return SendClientMessage(playerid, COLOR_LIGHTBLUE, "You have deleted 15 latest reports that existed on the MySQL database.");
+}
+
+forward VoteReport(playerid, report_id, vote);
+public VoteReport(playerid, report_id, vote) {
+
+	new
+		rows, string[100], accepted, reported[MAX_PLAYER_NAME], reason[100];
+	
+	cache_get_row_count(rows);
+	
+	if (!rows) {
+		format(string, sizeof string, "ERROR: Report ID [%d] couldn't be found in the MySQL Database.", reportid);
+		return SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
+	}
+	
+	cache_get_value_name_int(i, "Accepted", accepted);
+	
+	if (Accepted != 0) {
+		format(string, sizeof string, "ERROR: Report ID [%d] is already accepted or denied before.");
+		return SendClientMessage(playerid, COLOR_RED, string);
+	}
+	
+	cache_get_value_name(i, "Reported", reported, sizeof reported);
+	cache_get_value_name(i, "Reason", reason sizeof report);
+
+	format(string, sizeof string, "You have %s report ID [%i].", (vote == 1) ? ("accepted") : ("denied"), reportid);
+	SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
+	
+	mysql_format(Database, string, sizeof string, "UPDATE `reports` SET `Accepted` = '%i' WHERE `ID` = '%i'", vote, reportid);
+	mysql_pquery(Database, query);
+
+	return 1;
+
+}
+
+CMD:r(playerid, params[]) {
+	
+	if (!IsPlayerAdmin(playerid)) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: {FFFFFF}You are not authorized to use that command.");
+	
+	new reportid, string[200], query[300], character;
+	if (sscanf(params, "dc", reportid, character)) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}/R [Report ID] [Y/N]");
+	
+	switch (character) {
+		case 'Y', 'y': character = 1;
+		case 'N', 'n': character = 2;
+		default: character = 0;
+	}
+	
+	if (!character) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}Y (y) or N (n) is the only supported answer.");
+	
 	mysql_format(Database, query, sizeof(query), "SELECT * FROM `reports` WHERE `ID` = '%i'", reportid);
-	new Cache:result = mysql_query(Database, query);
-	if(cache_num_rows())
-	{
-		new Accepted, Reported[MAX_PLAYER_NAME], Reason[200];
-		for(new i = 0; i < cache_num_rows(); i++)
-		{
-			cache_get_value_name_int(i, "Accepted", Accepted);
-			cache_get_value_name(i, "Reported", Reported, MAX_PLAYER_NAME);
-			cache_get_value_name(i, "Reason", Reason, 200);
-		}
-		if(Accepted == 1) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: That report has been already accepted once.");
-
-		format(string, sizeof(string), "You have accepted report id %d", reportid);
-		SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
-		mysql_format(Database, query, sizeof(query), "UPDATE `reports` SET `Accepted` = '1' WHERE `ID` = '%i'", reportid);
-		mysql_query(Database, query);
-	}
-	else
-	{
-		format(string, sizeof(string), "Report ID [%d] couldn't be found in the MySQL Database.", reportid);
-		SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
-	}
-	cache_delete(result);
+	mysql_pquery(Database, query, "VoteReport", "iii", playerid, reportid, character);
 	return 1;
 }
 
-CMD:dr(playerid, params[])
-{	
-	new reportid, string[200], query[300];
-	if(!IsPlayerAdmin(playerid)) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: {FFFFFF}You are not authorized to use that command.");
-	if(sscanf(params, "d", reportid)) return SendClientMessage(playerid, COLOR_LIGHTBLUE, "[USAGE]: {FFFFFF}/dr [reportid]");
-	mysql_format(Database, query, sizeof(query), "SELECT * FROM `reports` WHERE `ID` = '%i'", reportid);
-	new Cache:result = mysql_query(Database, query);
-	if(cache_num_rows())
-	{
-		new Accepted, Reported[MAX_PLAYER_NAME], Reason[200];
-		for(new i = 0; i < cache_num_rows(); i++)
-		{
-			cache_get_value_name_int(i, "Accepted", Accepted);
-			cache_get_value_name(i, "Reported", Reported, MAX_PLAYER_NAME);
-			cache_get_value_name(i, "Reason", Reason, 200);
-		}
-		if(Accepted == 2) return SendClientMessage(playerid, COLOR_RED, "[ERROR]: That report has been already denied once.");
+public OnDialogResponse(playerid, dialogid, response, listitem, inputtext[]) {
 
-		format(string, sizeof(string), "You have denied report id %d", reportid);
-		SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
-		mysql_format(Database, query, sizeof(query), "UPDATE `reports` SET `Accepted` = '2' WHERE `ID` = '%i'", reportid);
-		mysql_query(Database, query);
+	if (dialogid == DIALOG_REPORTS) {
+		if (!response) {
+			GetReports(playerid);
+		}
+		
+		return 1;
 	}
-	else
-	{
-		format(string, sizeof(string), "Report ID [%d] couldn't be found in the MySQL Database.", reportid);
-		SendClientMessage(playerid, COLOR_LIGHTBLUE, string);
-	}
-	cache_delete(result);
+	
 	return 1;
 }
 
@@ -198,11 +232,8 @@ ReturnDate()
     return sendString;
 }
 
-GetName(playerid)
-{
-	new name[MAX_PLAYER_NAME];
-	GetPlayerName(playerid, name, sizeof(name));
-	return name;
+GetPlayerNameEx(playerid) {
+	new player_Name[MAX_PLAYER_NAME];
+	GetPlayerName(playerid, player_Name, sizeof player_Name);
+	return player_Name;
 }
-
-#endif
